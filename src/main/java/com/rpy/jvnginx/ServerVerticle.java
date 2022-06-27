@@ -2,6 +2,7 @@ package com.rpy.jvnginx;
 
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.http.HttpServer;
+import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.handler.BodyHandler;
 
@@ -18,13 +19,28 @@ public class ServerVerticle extends AbstractVerticle {
     HttpServer server = vertx.createHttpServer();
 
     Router router = Router.router(vertx);
+
+    // get
     router.get("/hello")
       .handler(BodyHandler.create())
       .handler(rc -> {
-        rc.response().end("Hello Server!");
+        rc.response().end("Hello Server! GET!");
+      });
+
+    // post
+    router.post("/hello")
+      .handler(BodyHandler.create())
+      .handler(rc -> {
+        JsonObject bodyAsJson = rc.getBodyAsJson();
+        System.out.println(bodyAsJson.toString());
+        rc.response().end("Hello Server! POST!");
       });
 
 
+    router.errorHandler(500,rc->{
+      rc.failure().printStackTrace();
+      rc.response().end(rc.failure().getMessage());
+    });
 
     server
       .requestHandler(router)

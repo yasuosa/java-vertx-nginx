@@ -1,7 +1,10 @@
 package com.rpy.jvnginx;
 
 import io.vertx.core.AbstractVerticle;
+import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.*;
+
+import java.util.Queue;
 
 /**
  * @program: java-vertx-nginx
@@ -15,43 +18,52 @@ public class ProxyVerticle extends AbstractVerticle {
   public void start() throws Exception {
 
     HttpClientOptions clientOptions = new HttpClientOptions();
-    clientOptions.setDefaultHost("127.0.0.1");
-    clientOptions.setDefaultPort(8080);
+    //clientOptions.setDefaultHost("127.0.0.1");
+    //clientOptions.setDefaultPort(8080);
+    clientOptions.setDefaultHost("www.baidu.com");
+    clientOptions.setDefaultPort(443);
+    clientOptions.setSsl(true);
     HttpClient client = vertx.createHttpClient(clientOptions);
 
 
-    vertx.createHttpServer()
-      .requestHandler(req -> {
-        HttpServerResponse resp = req.response();
-        resp.setChunked(true); // body分块
+    HttpServerOptions serverOptions = new HttpServerOptions();
+    serverOptions.setTcpKeepAlive(true);
 
+    vertx.createHttpServer(serverOptions)
+      .requestHandler(req -> {
+
+        HttpServerResponse resp = req.response();
+        req.pause(); // 暂停
+        resp.setChunked(true); // body分块
         client.request(req.method(), req.uri(), ar -> {
+          // request 构造完成
           if (ar.succeeded()) {
+
+            // 获取代理请求  - localhost:9090/hello
             HttpClientRequest req2 = ar.result();
 
-
-
-            req2.response(ar2 -> {
-              if (ar2.succeeded()) {
-                HttpClientResponse resp2 = ar2.result();
-
-                resp.setStatusCode(resp2.statusCode());
-
-                resp2.handler(resp::write);
-
-                resp2.endHandler(x->{
-                  resp.end();
-                });
+            // 设置header
+            req.headers().forEach(entry -> {
+              if ("Content-Type".equals(entry.getValue())) {
+                req2.putHeader(entry.getKey(), entry.getValue());
               }
             });
 
-            req.handler(req2::write); // 持续发送
 
 
-            req.endHandler(x -> {
-              req2.end();
-            });
+
+            req2.send(req)
+              .onSuccess(resp::send)
+              .onFailure(Throwable::printStackTrace);
+
+
+          } else {
+            resp.setStatusCode(500)
+              .end(ar.cause().getMessage());
+            ar.cause().printStackTrace();
           }
+
+
         });
       })
       .listen(9090, event -> {
