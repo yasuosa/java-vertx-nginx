@@ -1,9 +1,13 @@
 package com.rpy.jvnginx;
 
+import com.rpy.jvnginx.domain.Upstream;
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.*;
+import io.vertx.core.json.JsonObject;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Queue;
 
 /**
@@ -17,59 +21,70 @@ public class ProxyVerticle extends AbstractVerticle {
   @Override
   public void start() throws Exception {
 
-    HttpClientOptions clientOptions = new HttpClientOptions();
-    //clientOptions.setDefaultHost("127.0.0.1");
-    //clientOptions.setDefaultPort(8080);
-    clientOptions.setDefaultHost("www.baidu.com");
-    clientOptions.setDefaultPort(443);
-    clientOptions.setSsl(true);
-    HttpClient client = vertx.createHttpClient(clientOptions);
+    Integer port = config().getInteger("port"); // 端口
+
+    List<Upstream> upstreamList = new ArrayList<>();
+    config().getJsonArray("upstream").forEach(jsonObj -> {
+      upstreamList.add(new Upstream((JsonObject) jsonObj,vertx));
+    });
+
+
 
 
     HttpServerOptions serverOptions = new HttpServerOptions();
-    serverOptions.setTcpKeepAlive(true);
 
     vertx.createHttpServer(serverOptions)
       .requestHandler(req -> {
-
+        String path = req.path(); // 请求的路径
         HttpServerResponse resp = req.response();
         req.pause(); // 暂停
-        resp.setChunked(true); // body分块
-        client.request(req.method(), req.uri(), ar -> {
-          // request 构造完成
-          if (ar.succeeded()) {
-
-            // 获取代理请求  - localhost:9090/hello
-            HttpClientRequest req2 = ar.result();
-
-            // 设置header
-            req.headers().forEach(entry -> {
-              if ("Content-Type".equals(entry.getValue())) {
-                req2.putHeader(entry.getKey(), entry.getValue());
-              }
-            });
-
-
-
-
-            req2.send(req)
-              .onSuccess(resp::send)
-              .onFailure(Throwable::printStackTrace);
-
-
-          } else {
-            resp.setStatusCode(500)
-              .end(ar.cause().getMessage());
-            ar.cause().printStackTrace();
+        for (Upstream upstream : upstreamList) {
+          if(path.startsWith(upstream.getPrefix())){
+            dispatchClient(upstream,req,resp);
+            break;
           }
-
-
-        });
+        }
       })
-      .listen(9090, event -> {
+      .listen(port, event -> {
         if (event.succeeded()) {
-          System.out.println("服务9090启动成功！");
+          System.out.printf("服务%d - 启动成功！",port);
+
+          vertx.deployVerticle(new ServerVerticle());
         }
       });
   }
+
+
+  /**
+   * 转发
+   */
+  private void dispatchClient(Upstream upstream,HttpServerRequest req,HttpServerResponse resp) {
+    HttpClient client = upstream.getHttpClient();
+    String uri = req.uri().replace(upstream.getPrefix(),upstream.getPath());
+    client.request(req.method(), uri, ar -> {
+      // request 构造完成
+      if (ar.succeeded()) {
+        // 获取代理请求  - localhost:9090/hello
+        HttpClientRequest reqUpstream = ar.result();
+        // 设置header
+        reqUpstream.headers().setAll(req.headers());
+        // 转发
+        reqUpstream.send(req)
+          .onSuccess(respUpstream -> {
+            resp.setStatusCode(respUpstream.statusCode());
+            resp.headers().setAll(respUpstream.headers());
+            resp.send(respUpstream);
+          })
+          .onFailure(t -> {
+            t.printStackTrace();
+            resp.setStatusCode(500).end(t.getMessage());
+          });
+      } else {
+        resp.setStatusCode(500).end(ar.cause().getMessage());
+        ar.cause().printStackTrace();
+      }
+    });
+  }
+
+
 }

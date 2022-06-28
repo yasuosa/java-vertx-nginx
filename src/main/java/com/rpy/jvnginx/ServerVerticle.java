@@ -37,9 +37,17 @@ public class ServerVerticle extends AbstractVerticle {
       });
 
 
+    router.get("/a").handler(rc -> {
+      rc.response().end("AAA!");
+    });
+
     router.errorHandler(500,rc->{
       rc.failure().printStackTrace();
       rc.response().end(rc.failure().getMessage());
+    });
+
+    router.errorHandler(404,rc -> {
+      rc.response().end("404");
     });
 
     server
